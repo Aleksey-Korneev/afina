@@ -31,7 +31,7 @@ private:
         char *Low = nullptr;
 
         // coroutine stack end address
-        char *Hight = nullptr;
+        char *High = nullptr;
 
         // coroutine stack copy buffer
         std::tuple<char *, uint32_t> Stack = std::make_tuple(nullptr, 0);
@@ -88,11 +88,15 @@ protected:
     static void null_unblocker(Engine &) {}
 
 public:
+    // TODO
     Engine(unblocker_func unblocker = null_unblocker)
-        : StackBottom(0), cur_routine(nullptr), alive(nullptr), _unblocker(unblocker) {}
+        : StackBottom(0), cur_routine(nullptr), alive(nullptr),
+        blocked(nullptr), idle_ctx(nullptr), _unblocker(unblocker)
+        {
+        }
     Engine(Engine &&) = delete;
     Engine(const Engine &) = delete;
-
+    ~Engine();
     /**
      * Gives up current routine execution and let engine to schedule other one. It is not defined when
      * routine will get execution back, for example if there are no other coroutines then executing could
@@ -111,6 +115,9 @@ public:
      * if passed routine is the current one method does nothing
      */
     void sched(void *routine);
+
+    // TODO
+    void enter(context *ctx);
 
     /**
      * Blocks current routine so that is can't be scheduled anymore
@@ -144,6 +151,7 @@ public:
         void *pc = run(main, std::forward<Ta>(args)...);
 
         idle_ctx = new context();
+        // TODO
         if (setjmp(idle_ctx->Environment) > 0) {
             if (alive == nullptr) {
                 _unblocker(*this);
