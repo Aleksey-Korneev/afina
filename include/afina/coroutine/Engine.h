@@ -7,7 +7,9 @@
 #include <map>
 #include <tuple>
 
-#include <setjmp.h>
+#include <utility>
+// #include <setjmp.h>
+#include <csetjmp>
 
 namespace Afina {
 namespace Coroutine {
@@ -27,11 +29,17 @@ private:
      */
     struct context;
     typedef struct context {
+        // free Stack memory
+        ~context()
+        {
+            delete[] std::get<0>(Stack);
+        }
+
         // coroutine stack start address
-        char *Low = nullptr;
+        char *StackStart = nullptr;
 
         // coroutine stack end address
-        char *High = nullptr;
+        char *StackEnd = nullptr;
 
         // coroutine stack copy buffer
         std::tuple<char *, uint32_t> Stack = std::make_tuple(nullptr, 0);
@@ -42,7 +50,13 @@ private:
         // To include routine in the different lists, such as "alive", "blocked", e.t.c
         struct context *prev = nullptr;
         struct context *next = nullptr;
+
+        // Coroutine is in the blocked list
+        bool is_blocked = false;
     } context;
+
+    // void del_elem(context *&head, context *&elem);
+    // void add_to_head(context *&head, context *&new_head);
 
     /**
      * Where coroutines stack begins
@@ -75,6 +89,9 @@ private:
     unblocker_func _unblocker;
 
 protected:
+    //void Launch(context &ctx);
+    void Launch(context *ctx);
+
     /**
      * Save stack of the current coroutine in the given context
      */
@@ -90,7 +107,7 @@ protected:
 public:
     // TODO
     Engine(unblocker_func unblocker = null_unblocker)
-        : StackBottom(0), cur_routine(nullptr), alive(nullptr),
+        : StackBottom(nullptr), cur_routine(nullptr), alive(nullptr),
         blocked(nullptr), idle_ctx(nullptr), _unblocker(unblocker)
         {
         }
@@ -117,7 +134,7 @@ public:
     void sched(void *routine);
 
     // TODO
-    void enter(context *ctx);
+    // void enter(context *ctx);
 
     /**
      * Blocks current routine so that is can't be scheduled anymore
@@ -142,7 +159,8 @@ public:
      * @param pointer to the main coroutine
      * @param arguments to be passed to the main coroutine
      */
-    template <typename... Ta> void start(void (*main)(Ta...), Ta &&... args) {
+    template <typename... Ta>
+    void start(void (*main)(Ta...), Ta &&... args) {
         // To acquire stack begin, create variable on stack and remember its address
         char StackStartsHere;
         this->StackBottom = &StackStartsHere;
@@ -151,7 +169,9 @@ public:
         void *pc = run(main, std::forward<Ta>(args)...);
 
         idle_ctx = new context();
-        // TODO
+        idle_ctx->StackStart = &StackStartsHere;
+        idle_ctx->StackEnd = &StackStartsHere;
+
         if (setjmp(idle_ctx->Environment) > 0) {
             if (alive == nullptr) {
                 _unblocker(*this);
@@ -161,19 +181,30 @@ public:
             yield();
         } else if (pc != nullptr) {
             Store(*idle_ctx);
+            cur_routine = idle_ctx;
             sched(pc);
         }
 
         // Shutdown runtime
         delete idle_ctx;
-        this->StackBottom = 0;
+        this->StackBottom = nullptr;
+    }
+
+    /**
+     * Wraps _run(void (*func)(Ta...), Ta &&... args), with created StackAddr.
+     */
+    template <typename... Ta>
+    void *run(void (*func)(Ta...), Ta &&... args) {
+        char StackAddr;
+        return _run(&StackAddr, func, std::forward<Ta>(args)...);
     }
 
     /**
      * Register new coroutine. It won't receive control until scheduled explicitely or implicitly. In case of some
      * errors function returns -1
      */
-    template <typename... Ta> void *run(void (*func)(Ta...), Ta &&... args) {
+    template <typename... Ta>
+    void *_run(char *StackAddr, void (*func)(Ta...), Ta &&... args) {
         if (this->StackBottom == 0) {
             // Engine wasn't initialized yet
             return nullptr;
@@ -181,6 +212,8 @@ public:
 
         // New coroutine context that carries around all information enough to call function
         context *pc = new context();
+        pc->StackStart = StackAddr;
+        pc->StackEnd = StackAddr;
 
         // Store current state right here, i.e just before enter new coroutine, later, once it gets scheduled
         // execution starts here. Note that we have to acquire stack of the current function call to ensure
@@ -211,7 +244,10 @@ public:
             // current coroutine finished, and the pointer is not relevant now
             cur_routine = nullptr;
             pc->prev = pc->next = nullptr;
-            delete std::get<0>(pc->Stack);
+
+            // put in ~context()
+            // delete std::get<0>(pc->Stack);
+
             delete pc;
 
             // We cannot return here, as this function "returned" once already, so here we must select some other
