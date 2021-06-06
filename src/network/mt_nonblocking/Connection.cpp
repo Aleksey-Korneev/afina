@@ -100,9 +100,7 @@ void Connection::DoRead()
             }
         }
 
-        if (_parsed == 0) {
-            _parsed = 0;
-        } else {
+        if (_parsed != 0) {
             throw std::runtime_error(std::string(strerror(errno)));
         }
         std::atomic_thread_fence(std::memory_order_release);
