@@ -205,14 +205,16 @@ Engine::~Engine()
     for (; coro != nullptr; ) {
         context *coro_prev = coro;
         coro = coro->next;
-        delete[] coro_prev;
+        delete[] std::get<0>(coro_prev->Stack);
+        delete coro_prev;
     }
 
     coro = blocked;
     for (; coro != nullptr; ) {
         context *coro_prev = coro;
         coro = coro->next;
-        delete[] coro_prev;
+        delete[] std::get<0>(coro_prev->Stack);
+        delete coro_prev;
     }
 }
 

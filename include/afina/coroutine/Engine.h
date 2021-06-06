@@ -29,12 +29,6 @@ private:
      */
     struct context;
     typedef struct context {
-        // free Stack memory
-        ~context()
-        {
-            delete[] std::get<0>(Stack);
-        }
-
         // coroutine stack start address
         char *StackStart = nullptr;
 
@@ -186,6 +180,7 @@ public:
         }
 
         // Shutdown runtime
+        delete[] std::get<0>(idle_ctx->Stack);
         delete idle_ctx;
         this->StackBottom = nullptr;
     }
@@ -244,10 +239,7 @@ public:
             // current coroutine finished, and the pointer is not relevant now
             cur_routine = nullptr;
             pc->prev = pc->next = nullptr;
-
-            // put in ~context()
-            // delete std::get<0>(pc->Stack);
-
+            delete[] std::get<0>(pc->Stack);
             delete pc;
 
             // We cannot return here, as this function "returned" once already, so here we must select some other
