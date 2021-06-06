@@ -21,14 +21,16 @@ namespace Network {
 namespace MTnonblock {
 
 // See Worker.h
-Worker::Worker(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Afina::Logging::Service> pl)
-    : _pStorage(ps), _pLogging(pl), isRunning(false), _epoll_fd(-1) {
+Worker::Worker(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Afina::Logging::Service> pl,
+                ServerImpl* server)
+    : _pStorage(ps), _pLogging(pl), isRunning(false), _epoll_fd(-1), _server(server) {
     // TODO: implementation here
 }
 
 // See Worker.h
 Worker::~Worker() {
-    // TODO: implementation here
+    Stop();
+    Join();
 }
 
 // See Worker.h
@@ -57,11 +59,12 @@ void Worker::Start(int epoll_fd) {
 }
 
 // See Worker.h
-void Worker::Stop() { isRunning = false; }
+void Worker::Stop() {
+    isRunning = false;
+}
 
 // See Worker.h
 void Worker::Join() {
-    assert(_thread.joinable());
     _thread.join();
 }
 
@@ -75,6 +78,7 @@ void Worker::OnRun() {
     // Do not forget to use EPOLLEXCLUSIVE flag when register socket
     // for events to avoid thundering herd type behavior.
     int timeout = -1;
+    //size_t count = 0;
     std::array<struct epoll_event, 64> mod_list;
     while (isRunning) {
         int nmod = epoll_wait(_epoll_fd, &mod_list[0], mod_list.size(), timeout);
@@ -97,7 +101,11 @@ void Worker::OnRun() {
                 pconn->OnError();
             } else if (current_event.events & EPOLLRDHUP) {
                 _logger->debug("Got EPOLLRDHUP, value of returned events: {}", current_event.events);
-                pconn->OnClose();
+                if (current_event.events & EPOLLOUT) {
+                    pconn->DoWrite();
+                } else {
+                    pconn->OnClose();
+                }
             } else {
                 // Depends on what connection wants...
                 if (current_event.events & EPOLLIN) {
@@ -117,7 +125,12 @@ void Worker::OnRun() {
                 if ((epoll_ctl_retval = epoll_ctl(_epoll_fd, EPOLL_CTL_MOD, pconn->_socket, &pconn->_event))) {
                     _logger->debug("epoll_ctl failed during connection rearm: error {}", epoll_ctl_retval);
                     pconn->OnError();
-                    delete pconn;
+                    {
+                        std::unique_lock<std::mutex> lock(_server->m);
+                        close(pconn->_socket);
+                        _server->eraseConnection(pconn);
+                        delete pconn;
+                    }
                 }
             }
             // Or delete closed one
@@ -125,7 +138,12 @@ void Worker::OnRun() {
                 if (epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, pconn->_socket, &pconn->_event)) {
                     std::cerr << "Failed to delete connection!" << std::endl;
                 }
-                delete pconn;
+                {
+                    std::unique_lock<std::mutex> lock(_server->m);
+                    close(pconn->_socket);
+                    _server->eraseConnection(pconn);
+                    delete pconn;
+                }
             }
         }
         // TODO: Select timeout...
